@@ -14,6 +14,12 @@ SUITS = "SHDC"
 STR = {'N': 5, 'S': 4, 'H': 3, 'D': 2, 'C': 1}      # bid hierarchy: No-trump > S > H > D > C
 RN = {11: 'J', 12: 'Q', 13: 'K', 14: 'A'}
 rname = lambda r: RN.get(r, str(r))
+NT_MULT = 2                 # a No-Trump contract doubles points (made OR broken); stacks with challenge/rechallenge
+EARLY_END_NT_ONLY = False   # False: ANY bid ends the hand as soon as it is fulfilled; True: only No-Trump bids do
+
+
+def nt_mult(room):
+    return NT_MULT if room['trump'] == 'N' else 1
 
 
 def log(room, msg):
@@ -123,6 +129,8 @@ def do_bid(room, seat, d):
         room['turn'] = b
         log(room, "%s wins the bid: %d %s. Opponents may challenge." %
             (room['players'][b]['name'], room['cur'][1], room['trump']))
+        if room['trump'] == 'N':
+            log(room, "No Trump called - points are DOUBLED (x%d) whether the bid is made or broken." % NT_MULT)
     else:
         t = seat
         while True:
@@ -164,21 +172,29 @@ def do_play(room, seat, d):
     room['trick'] = []
     room['turn'] = w
     log(room, "%s wins the trick." % room['players'][w]['name'])
-    if room['played'] == room['k']:
-        finish(room)
+    b = room['bidder']
+    early = room['tw'][b % 2] >= room['cur'][1] and (not EARLY_END_NT_ONLY or room['trump'] == 'N')
+    if early or room['played'] == room['k']:
+        finish(room, early and room['played'] < room['k'])
 
 
-def finish(room):
+def finish(room, early=False):
     b = room['bidder']
     bt = b % 2
     need = room['cur'][1]
     got = room['tw'][bt]
-    m = room['mult']
-    tag = {1: '', 2: ' (challenged x2)', 4: ' (rechallenged x4)'}[m]
+    m = room['mult'] * nt_mult(room)          # challenge/rechallenge multiplier x No-Trump multiplier
+    parts = []
+    if nt_mult(room) > 1:
+        parts.append('No Trump x%d' % NT_MULT)
+    if room['mult'] > 1:
+        parts.append('challenged x2' if room['mult'] == 2 else 'rechallenged x4')
+    tag = ' (%s = x%d)' % (', '.join(parts), m) if parts else ''
     if got >= need:
         pts = need * 10 * m
         room['scores'][bt] += pts
-        room['result'] = "Bid MADE (%d/%d). Team %s scores %d%s." % (got, need, 'AB'[bt], pts, tag)
+        room['result'] = "Bid MADE%s (%d/%d). Team %s scores %d%s." % (
+            ' - hand ends early' if early else '', got, need, 'AB'[bt], pts, tag)
     else:
         pts = (need - got) * 25 * m
         room['scores'][1 - bt] += pts
@@ -402,7 +418,7 @@ function bannerH(){if(!S.bid||!['challenge','play','handover'].includes(S.phase)
  const bt=S.bidder%2,tm='AB'[bt],o='AB'[1-bt],n=S.bid[1],s=S.bid[2],m=S.mult;
  return `<div class="banner t${tm}"><div><div class=bsm>Winning bid: ${S.players[S.bidder]} · Team ${tm}</div><div class=bbig>${bidH(n,s)}</div></div>
  <div class=bm><b>${s=='N'?'No trump':SN[s]+' are trump'}</b><br>Team ${tm} needs ${n} hand${n>1?'s':''} and has ${S.tw[bt]}<br>Team ${o} has ${S.tw[1-bt]}</div>
- ${m>1?`<div class=mult>×${m}<small>${m==2?'Challenged by '+S.players[S.challenger]:'Rechallenged'}</small></div>`:''}</div>`}
+ ${s=='N'?`<div class=mult>NT ×2<small>Double points</small></div>`:''}${m>1?`<div class=mult>×${m}<small>${m==2?'Challenged by '+S.players[S.challenger]:'Rechallenged'}</small></div>`:''}</div>`}
 function dockH(){const me=S.seat,P=S.players,ph=S.phase;
  if(ph=='bidding'){if(S.turn!=me)return `<div class=msg>Waiting for ${P[S.turn]} to bid…</div>`;
   const cur=S.bid?S.bid[0]:0,ok=bn*10+SV[bs]>cur;
